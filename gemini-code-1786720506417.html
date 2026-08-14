@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simple Monthly Budget Tracker</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --primary: #2563eb;
+      --border: #e2e8f0;
+      --danger: #ef4444;
+      --success: #10b981;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 480px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid var(--border);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+
+    h1, h2 { font-size: 1.25rem; font-weight: 600; margin-bottom: 12px; }
+    .month-title { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 16px; }
+
+    .balance-display {
+      text-align: center;
+      padding: 16px 0;
+    }
+
+    .remaining-amount {
+      font-size: 2.5rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .remaining-amount.negative { color: var(--danger); }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-top: 8px;
+    }
+
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .input-group {
+      display: flex;
+      gap: 8px;
+    }
+
+    input {
+      flex: 1;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 1rem;
+    }
+
+    button {
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { opacity: 0.9; }
+
+    ul { list-style: none; }
+    li {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    li:last-child { border-bottom: none; }
+
+    .delete-btn {
+      background: transparent;
+      color: var(--danger);
+      font-size: 0.8rem;
+      padding: 4px 8px;
+    }
+
+    .history-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px dashed var(--border);
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <!-- Active Month Dashboard -->
+  <div class="card">
+    <h1 id="monthHeader">Monthly Budget</h1>
+    <p class="month-title" id="currentMonthName"></p>
+    
+    <div class="balance-display">
+      <div style="font-size: 0.85rem; color: var(--text-muted);">Remaining Balance</div>
+      <div class="remaining-amount" id="remainingBalance">$0.00</div>
+    </div>
+
+    <div class="stat-row">
+      <span>Target Budget: <b id="displayBudget">$0.00</b></span>
+      <span>Total Spent: <b id="displaySpent">$0.00</b></span>
+    </div>
+  </div>
+
+  <!-- Settings & Add Expense Form -->
+  <div class="card">
+    <h2>Budget Settings</h2>
+    <form id="budgetForm">
+      <div class="input-group">
+        <input type="number" id="budgetInput" placeholder="Set Monthly Budget ($)" step="0.01" min="0" required>
+        <button type="submit">Set</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Add Expense</h2>
+    <form id="expenseForm">
+      <input type="text" id="expenseNote" placeholder="Note (optional, e.g., Groceries)">
+      <div class="input-group">
+        <input type="number" id="expenseAmount" placeholder="Amount ($)" step="0.01" min="0.01" required>
+        <button type="submit">Subtract</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Expense List -->
+  <div class="card">
+    <h2>This Month's Transactions</h2>
+    <ul id="expenseList"></ul>
+  </div>
+
+  <!-- History Report -->
+  <div class="card">
+    <h2>Past Monthly Reports</h2>
+    <div id="historyList"></div>
+  </div>
+</div>
+
+<script>
+  // Key state variables
+  let state = JSON.parse(localStorage.getItem('budgetAppState')) || {
+    budget: 0,
+    expenses: [],
+    history: {}, // Format: "YYYY-MM": { budget, spent, remaining }
+    currentMonthKey: ''
+  };
+
+  const getCurrentMonthKey = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  };
+
+  const getCurrentMonthName = () => {
+    return new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
+  function checkMonthRollover() {
+    const activeKey = getCurrentMonthKey();
+    
+    // If the month changed since last open, store previous month's summary and reset active expenses
+    if (state.currentMonthKey && state.currentMonthKey !== activeKey) {
+      const totalSpent = state.expenses.reduce((sum, e) => sum + e.amount, 0);
+      state.history[state.currentMonthKey] = {
+        monthName: new Date(state.currentMonthKey + "-01").toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+        budget: state.budget,
+        spent: totalSpent,
+        remaining: state.budget - totalSpent
+      };
+      
+      // Reset expenses for the new month
+      state.expenses = [];
+    }
+    
+    state.currentMonthKey = activeKey;
+    saveState();
+  }
+
+  function saveState() {
+    localStorage.setItem('budgetAppState', JSON.stringify(state));
+    render();
+  }
+
+  function render() {
+    document.getElementById('currentMonthName').innerText = getCurrentMonthName();
+    
+    const totalSpent = state.expenses.reduce((sum, e) => sum + e.amount, 0);
+    const remaining = state.budget - totalSpent;
+
+    const remainingEl = document.getElementById('remainingBalance');
+    remainingEl.innerText = `$${remaining.toFixed(2)}`;
+    if (remaining < 0) {
+      remainingEl.classList.add('negative');
+    } else {
+      remainingEl.classList.remove('negative');
+    }
+
+    document.getElementById('displayBudget').innerText = `$${state.budget.toFixed(2)}`;
+    document.getElementById('displaySpent').innerText = `$${totalSpent.toFixed(2)}`;
+
+    // Render current expense list
+    const listEl = document.getElementById('expenseList');
+    listEl.innerHTML = state.expenses.length === 0 
+      ? '<li style="color: var(--text-muted); font-size: 0.9rem;">No expenses recorded this month.</li>' 
+      : '';
+
+    state.expenses.forEach((expense, index) => {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <div>
+          <b>-$${expense.amount.toFixed(2)}</b>
+          <span style="color: var(--text-muted); font-size: 0.85rem;">${expense.note ? ' (' + expense.note + ')' : ''}</span>
+        </div>
+        <button class="delete-btn" onclick="deleteExpense(${index})">Remove</button>
+      `;
+      listEl.appendChild(li);
+    });
+
+    // Render past history reports
+    const historyEl = document.getElementById('historyList');
+    const historyKeys = Object.keys(state.history).sort().reverse();
+    
+    historyEl.innerHTML = historyKeys.length === 0 
+      ? '<p style="color: var(--text-muted); font-size: 0.9rem;">No past monthly reports yet.</p>'
+      : '';
+
+    historyKeys.forEach(key => {
+      const item = state.history[key];
+      const div = document.createElement('div');
+      div.className = 'history-item';
+      div.innerHTML = `
+        <div>
+          <b>${item.monthName || key}</b><br>
+          <span style="color: var(--text-muted);">Budget: $${item.budget.toFixed(2)} | Spent: $${item.spent.toFixed(2)}</span>
+        </div>
+        <div style="font-weight: 600; color: ${item.remaining < 0 ? 'var(--danger)' : 'var(--success)'}">
+          ${item.remaining >= 0 ? '+' : ''}$${item.remaining.toFixed(2)}
+        </div>
+      `;
+      historyEl.appendChild(div);
+    });
+  }
+
+  // Event Handlers
+  document.getElementById('budgetForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const val = parseFloat(document.getElementById('budgetInput').value);
+    if (!isNaN(val)) {
+      state.budget = val;
+      document.getElementById('budgetInput').value = '';
+      saveState();
+    }
+  });
+
+  document.getElementById('expenseForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const amt = parseFloat(document.getElementById('expenseAmount').value);
+    const note = document.getElementById('expenseNote').value.trim();
+    if (!isNaN(amt) && amt > 0) {
+      state.expenses.unshift({ amount: amt, note: note, date: new Date().toISOString() });
+      document.getElementById('expenseAmount').value = '';
+      document.getElementById('expenseNote').value = '';
+      saveState();
+    }
+  });
+
+  function deleteExpense(index) {
+    state.expenses.splice(index, 1);
+    saveState();
+  }
+
+  // Initialize
+  checkMonthRollover();
+  render();
+</script>
+</body>
+</html>
